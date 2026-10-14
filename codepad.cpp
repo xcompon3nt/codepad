@@ -1,21 +1,3 @@
-/*--------------------------------------------------------------------------
-  Codepad - Lightweight Win32 Syntax Editor
-  Copyright (C) 2026 Mincho Georgiev
- 
-  This program is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
- 
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-  GNU General Public License for more details.
- 
-  You should have received a copy of the GNU General Public License
-  along with this program. If not, see <https://www.gnu.org/licenses/>.
------------------------------------------------------------------------------*/
- 
 #pragma warning(disable: 4005)
 #define UNICODE
 #define _UNICODE
@@ -49,7 +31,7 @@
 #endif
 
 #define APPNAME             L"Codepad"
-#define VERSION             L"1.0.067"
+#define VERSION             L"1.0.068"
 
 #define CUSTOM_EDIT_CLASS   L"CustomSyntaxEditor"
 #define SETTINGS_DLG_CLASS  L"ThemeSettingsDialog"
@@ -276,6 +258,7 @@ typedef struct {
     TextPos caret;
     TextPos selAnchor;
     BOOL isModified;
+    uint64_t docVersion;
     int64_t scrollX;
     int scrollY;
 } UndoStep;
@@ -359,6 +342,8 @@ typedef struct {
     BOOL useSpaces;
     int encodingIdx;
     BOOL isModified;
+    uint64_t docVersion;
+    uint64_t savedVersion;
     wchar_t filePath[MAX_PATH];
     wchar_t fileName[MAX_PATH];
     HWND hwndMain;
@@ -388,6 +373,8 @@ static HWND g_hFontQualCombo = NULL;
 static int g_selectedDlgEncoding = 0;
 static HWND g_hDlgCombo = NULL;
 static HCURSOR g_hDragCursor = NULL;
+
+static uint64_t g_docVersionCounter = 0;
 
 static inline Theme* GetActiveTheme(EditorState* s) {
     return (s && s->isDark) ? &g_darkTheme : &g_lightTheme;
@@ -1124,6 +1111,7 @@ static void UndoStack_PushInternal(UndoStack* stack, const EditorState* s) {
     step->caret = s->caret;
     step->selAnchor = s->selAnchor;
     step->isModified = s->isModified;
+    step->docVersion = s->docVersion;
     //record viewport position:
     step->scrollX = s->scrollX;
     step->scrollY = s->scrollY;
@@ -1132,6 +1120,7 @@ static void UndoStack_PushInternal(UndoStack* stack, const EditorState* s) {
 static void PushUndo(EditorState* s) {
     UndoStack_PushInternal(&s->undoStack, s);
     UndoStack_Clear(&s->redoStack);
+    s->docVersion = ++g_docVersionCounter;
 }
 
 static void Editor_Undo(HWND hwnd, EditorState* s) {
@@ -1151,7 +1140,8 @@ static void Editor_Undo(HWND hwnd, EditorState* s) {
     s->caret = step.caret;
     s->selAnchor = step.selAnchor;
     s->preferredCol = step.caret.col;
-    s->isModified = step.isModified;
+    s->docVersion = step.docVersion;
+    s->isModified = (s->docVersion != s->savedVersion);
     
     // 2. Check if the restored caret is already visible in the user's viewport
     RECT rc;
@@ -1198,7 +1188,8 @@ static void Editor_Redo(HWND hwnd, EditorState* s) {
     s->caret = step.caret;
     s->selAnchor = step.selAnchor;
     s->preferredCol = step.caret.col;
-    s->isModified = step.isModified;
+    s->docVersion = step.docVersion;
+    s->isModified = (s->docVersion != s->savedVersion);
     
     // 2. Check if the restored caret is already visible in the user's viewport
     RECT rc;
@@ -2109,6 +2100,8 @@ static BOOL LoadFileContent(HWND hwnd, EditorState* s, const wchar_t* path) {
             wcscpy_s(s->filePath, MAX_PATH, fullPath);
             const wchar_t* lastSlash = wcsrchr(fullPath, L'\\');
             wcscpy_s(s->fileName, MAX_PATH, lastSlash ? lastSlash + 1 : fullPath);
+            s->docVersion = ++g_docVersionCounter;
+            s->savedVersion = s->docVersion;
             SetModified(s, FALSE);
             UpdateTitle(s);
             UpdateScrollbars(hwnd, s);
@@ -2235,6 +2228,9 @@ static BOOL LoadFileContent(HWND hwnd, EditorState* s, const wchar_t* path) {
     wcscpy_s(s->filePath, MAX_PATH, fullPath);
     const wchar_t* lastSlash = wcsrchr(fullPath, L'\\');
     wcscpy_s(s->fileName, MAX_PATH, lastSlash ? lastSlash + 1 : fullPath);
+    
+    s->docVersion = ++g_docVersionCounter;
+    s->savedVersion = s->docVersion;
 
     s->caret.row = 0;
     s->caret.col = 0;
@@ -2412,6 +2408,7 @@ static BOOL SaveFileContent(HWND hwnd, EditorState* s, const wchar_t* path) {
     wcscpy_s(s->filePath, MAX_PATH, fullPath);
     const wchar_t* lastSlash = wcsrchr(fullPath, L'\\');
     wcscpy_s(s->fileName, MAX_PATH, lastSlash ? lastSlash + 1 : fullPath);
+    s->savedVersion = s->docVersion;
     SetModified(s, FALSE);
     UpdateTitle(s);
     UpdateStatusBar(s);
@@ -4996,6 +4993,8 @@ static LRESULT CALLBACK CustomEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         s->caret.col = 0;
         s->preferredCol = 0;
         ClearSelection(s);
+        s->docVersion = ++g_docVersionCounter;
+        s->savedVersion = s->docVersion;
         SetModified(s, FALSE);
         UpdateCodeBlocks(s);
         RecalculateMaxCols(s);
@@ -6507,6 +6506,8 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 s->filePath[0] = L'\0';
                 s->fileName[0] = L'\0';
                 s->encodingIdx = 0;
+                s->docVersion = ++g_docVersionCounter;
+                s->savedVersion = s->docVersion;
                 SetModified(s, FALSE);
                 UpdateCodeBlocks(s);
                 UpdateScrollbars(g_hwndEditor, s);
