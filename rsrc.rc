@@ -9,8 +9,8 @@
 
 // Version Information
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION        1,0,0,67
-PRODUCTVERSION     1,0,0,67
+FILEVERSION        1,0,0,68
+PRODUCTVERSION     1,0,0,68
 FILEFLAGSMASK      VS_FFI_FILEFLAGSMASK
 #ifdef _DEBUG
 FILEFLAGS          VS_FF_DEBUG
@@ -26,12 +26,12 @@ BEGIN
         BLOCK "040904B0" // US English (0x0409), Unicode Charset (0x04B0 = 1200)
         BEGIN
             VALUE "FileDescription",  "Codepad Lightweight Syntax Editor"
-            VALUE "FileVersion",      "1.0.0.67"
+            VALUE "FileVersion",      "1.0.0.68"
             VALUE "InternalName",     "Codepad"
             VALUE "LegalCopyright",   "Copyright (C) 2026"
             VALUE "OriginalFilename", "Codepad.exe"
             VALUE "ProductName",      "Codepad"
-            VALUE "ProductVersion",   "1.0.067"
+            VALUE "ProductVersion",   "1.0.068"
         END
     END
     BLOCK "VarFileInfo"
