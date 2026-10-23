@@ -31,7 +31,7 @@
 #endif
 
 #define APPNAME             L"Codepad"
-#define VERSION             L"1.0.068"
+#define VERSION             L"1.0.069"
 
 #define CUSTOM_EDIT_CLASS   L"CustomSyntaxEditor"
 #define SETTINGS_DLG_CLASS  L"ThemeSettingsDialog"
@@ -280,11 +280,16 @@ typedef struct {
 
 static SearchConfig g_search = { L"", L"", FALSE, FALSE, TRUE, TRUE };
 
-// Find in Files persistent settings
+
+// Find in Files settings & session history
 static wchar_t g_grepPatterns[512] = L"*.c *.cpp *.h *.asm *.inc *.cxx *.pas";
 static wchar_t g_grepDirectory[MAX_PATH] = L"";
 static int g_splitterHeight = -1; // -1 means default 1/4 of window
 static BOOL g_showOutputPane = FALSE;
+
+#define MAX_GREP_DIR_HISTORY 20
+static wchar_t g_grepDirHistory[MAX_GREP_DIR_HISTORY][MAX_PATH];
+static int g_grepDirHistoryCount = 0;
 
 typedef struct {
     Line* lines;
@@ -487,6 +492,46 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 static LRESULT CALLBACK ThemeDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 static LRESULT CALLBACK OutputPaneProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 static LRESULT CALLBACK SplitterProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+
+static void AddGrepDirToHistory(const wchar_t* dir) {
+    if (!dir || dir[0] == L'\0') return;
+
+    // If directory is already in history, move it to the front
+    for (int i = 0; i < g_grepDirHistoryCount; i++) {
+        if (_wcsicmp(g_grepDirHistory[i], dir) == 0) {
+            wchar_t tmp[MAX_PATH];
+            wcscpy_s(tmp, MAX_PATH, g_grepDirHistory[i]);
+            for (int j = i; j > 0; j--) {
+                wcscpy_s(g_grepDirHistory[j], MAX_PATH, g_grepDirHistory[j - 1]);
+            }
+            wcscpy_s(g_grepDirHistory[0], MAX_PATH, tmp);
+            return;
+        }
+    }
+
+    // New entry: shift down and insert at index 0
+    int shiftLimit = (g_grepDirHistoryCount < MAX_GREP_DIR_HISTORY) ? g_grepDirHistoryCount : (MAX_GREP_DIR_HISTORY - 1);
+    for (int j = shiftLimit; j > 0; j--) {
+        wcscpy_s(g_grepDirHistory[j], MAX_PATH, g_grepDirHistory[j - 1]);
+    }
+    wcscpy_s(g_grepDirHistory[0], MAX_PATH, dir);
+    if (g_grepDirHistoryCount < MAX_GREP_DIR_HISTORY) {
+        g_grepDirHistoryCount++;
+    }
+}
+
+static void GetCurrentFileDirectory(const EditorState* s, wchar_t* outDir, size_t maxLen) {
+    if (s && s->filePath[0] != L'\0') {
+        wcscpy_s(outDir, maxLen, s->filePath);
+        wchar_t* lastSlash = wcsrchr(outDir, L'\\');
+        if (lastSlash) {
+            *lastSlash = L'\0';
+            return;
+        }
+    }
+    GetCurrentDirectoryW((DWORD)maxLen, outDir);
+}
 
 // -------------------------------------------------------------
 // Password & About Dialog Implementations
@@ -2603,7 +2648,6 @@ static void SaveSettingsToIni(HWND hwndMain, EditorState* s) {
 
     // Find in Files settings
     WritePrivateProfileStringW(L"FindInFiles", L"Patterns", g_grepPatterns, iniPath);
-    WritePrivateProfileStringW(L"FindInFiles", L"Directory", g_grepDirectory, iniPath);
     wsprintf(buf, L"%d", g_splitterHeight);
     WritePrivateProfileStringW(L"FindInFiles", L"SplitterHeight", buf, iniPath);
 
@@ -2635,7 +2679,6 @@ static void LoadSettingsFromIni(EditorState* s) {
 
     // Find in Files settings
     GetPrivateProfileStringW(L"FindInFiles", L"Patterns", L"*.c *.cpp *.h *.asm *.inc *.cxx *.pas", g_grepPatterns, 512, iniPath);
-    GetPrivateProfileStringW(L"FindInFiles", L"Directory", L"", g_grepDirectory, MAX_PATH, iniPath);
     g_splitterHeight = GetPrivateProfileIntW(L"FindInFiles", L"SplitterHeight", -1, iniPath);
 
     LoadThemeSection(L"DarkTheme", &g_darkTheme, iniPath);
@@ -4156,15 +4199,13 @@ static LRESULT CALLBACK GrepDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             WS_CHILD | WS_VISIBLE | CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_TABSTOP, 90, 72, 305, 150, hwnd, (HMENU)IDDIRECTORY, NULL, NULL);
         SendMessage(hDir, WM_SETFONT, (WPARAM)hGuiFont, TRUE);
 
-        if (g_grepDirectory[0] == L'\0') {
-            if (s && s->filePath[0] != L'\0') {
-                wcscpy_s(g_grepDirectory, MAX_PATH, s->filePath);
-                wchar_t* lastSlash = wcsrchr(g_grepDirectory, L'\\');
-                if (lastSlash) *lastSlash = L'\0';
-            } else {
-                GetCurrentDirectoryW(MAX_PATH, g_grepDirectory);
-            }
+        // Populate session history into dropdown list
+        for (int i = 0; i < g_grepDirHistoryCount; i++) {
+            SendMessageW(hDir, CB_ADDSTRING, 0, (LPARAM)g_grepDirHistory[i]);
         }
+
+        // Always defaults to the directory of the currently opened file
+        GetCurrentFileDirectory(s, g_grepDirectory, MAX_PATH);
         SetWindowTextW(hDir, g_grepDirectory);
 
         HWND hBtnDotDot = CreateWindowW(L"BUTTON", L"..", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
@@ -4229,6 +4270,9 @@ static LRESULT CALLBACK GrepDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             g_search.matchWholeWord = (IsDlgButtonChecked(hwnd, IDWHOLEWORD) == BST_CHECKED);
             g_search.matchCase = (IsDlgButtonChecked(hwnd, IDMATCHCASE) == BST_CHECKED);
 
+            // Save searched directory into session history
+            AddGrepDirToHistory(g_grepDirectory);
+
             SaveSettingsToIni(s->hwndMain, s);
             ExecuteFindInFiles(s->hwndMain, g_search.findText, g_grepPatterns, g_grepDirectory, g_search.matchCase, g_search.matchWholeWord);
             DestroyWindow(hwnd);
@@ -4256,8 +4300,12 @@ static void ShowFindInFilesDialog(HWND hwndParent, EditorState* s) {
         }
     }
 
+    // Always fetch directory of the currently opened file
+    GetCurrentFileDirectory(s, g_grepDirectory, MAX_PATH);
+
     if (g_hGrepDlg && IsWindow(g_hGrepDlg)) {
         SetDlgItemTextW(g_hGrepDlg, IDFINDWHAT, g_search.findText);
+        SetDlgItemTextW(g_hGrepDlg, IDDIRECTORY, g_grepDirectory);
         HWND hFind = GetDlgItem(g_hGrepDlg, IDFINDWHAT);
         SendMessage(hFind, CB_SETEDITSEL, 0, MAKELPARAM(0, -1));
         ShowWindow(g_hGrepDlg, SW_SHOWNORMAL);
