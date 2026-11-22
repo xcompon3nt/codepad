@@ -31,7 +31,7 @@
 #endif
 
 #define APPNAME             L"Codepad"
-#define VERSION             L"1.0.069"
+#define VERSION             L"1.0.070"
 
 #define CUSTOM_EDIT_CLASS   L"CustomSyntaxEditor"
 #define SETTINGS_DLG_CLASS  L"ThemeSettingsDialog"
@@ -1542,15 +1542,25 @@ static void Editor_SetText(EditorState* s, const wchar_t* text) {
 
     int count = 1;
     for (const wchar_t* scan = text; *scan; scan++) {
-        if (*scan == L'\n') count++;
+        if (*scan == L'\r') {
+            count++;
+            if (*(scan + 1) == L'\n') scan++;
+        } else if (*scan == L'\n') {
+            count++;
+        }
     }
 
     if (count > s->lineCapacity) {
         Line* newLines = (Line*)realloc(s->lines, (size_t)(count + 16) * sizeof(Line));
-        if (newLines) {
-            s->lines = newLines;
-            s->lineCapacity = count + 16;
+        if (!newLines) {
+            UpdateCodeBlocks(s);
+            RecalculateMaxCols(s);
+            RecalculateGutter(s);
+            UpdateStatusBar(s);
+            return;
         }
+        s->lines = newLines;
+        s->lineCapacity = count + 16;
     }
 
     int tabW = (s->tabSize > 0) ? s->tabSize : 2;
@@ -1558,6 +1568,8 @@ static void Editor_SetText(EditorState* s, const wchar_t* text) {
     int curRow = 0;
 
     while (*p) {
+        if (curRow >= s->lineCapacity) break;
+
         const wchar_t* lineStart = p;
         BOOL hasTab = FALSE;
         while (*p && *p != L'\r' && *p != L'\n') {
@@ -1608,14 +1620,14 @@ static void Editor_SetText(EditorState* s, const wchar_t* text) {
 
         curRow++;
 
-        if (hadTrailingNewline) {
+        if (hadTrailingNewline && curRow < s->lineCapacity) {
             if (curRow >= s->lineCount) {
                 Line_Init(&s->lines[curRow]);
                 s->lineCount = curRow + 1;
             }
         }
     }
-    
+
     if (s->lineCount < 1) {
         s->lineCount = 1;
         Line_Init(&s->lines[0]);
